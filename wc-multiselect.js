@@ -1,13 +1,10 @@
 class WcMultiselect extends HTMLElement{
+  static get observedAttributes() {
+    return ['label', 'options'];
+  }
   constructor () {
     super();
     this.template = document.createElement('template');
-    this.list = [
-      'item1',
-      'item2',
-      'item3',
-      'item4'
-    ];
     this.filterList = [];
     this.selectedItems = [];
     this.updateFilteredList = this.updateFilteredList.bind(this);
@@ -50,8 +47,9 @@ class WcMultiselect extends HTMLElement{
           border: 1px solid #e8e8e8;
           background: #fff;
           font-size: 14px;
-        }
-        .tags > input {
+          display: flex;
+          align-items: center;
+          flex-wrap: wrap;
         }
         .content {
           position: absolute;
@@ -65,6 +63,27 @@ class WcMultiselect extends HTMLElement{
           border-bottom-left-radius: 5px;
           border-bottom-right-radius: 5px;
           z-index: 3;
+        }
+        .content > ul {
+          list-style: none;
+          padding: 0;
+          margin: 0;
+          min-width: 100%;
+          vertical-align: top;
+        }
+        .content > ul > li {
+          padding: 0 12px;
+          min-height: 40px;
+          line-height: 16px;
+          cursor: pointer;
+          white-space: nowrap;
+          display: flex;
+          align-items: center;
+        }
+        .content > ul > li:hover {
+          background: #41b883;
+          outline: none;
+          color: #fff;
         }
         .tag {
           position: relative;
@@ -96,10 +115,17 @@ class WcMultiselect extends HTMLElement{
           transition: all .2s ease;
           border-radius: 5px;
         }
+        .input-filter {
+          font-size: 14px;
+          padding: 4px 26px 9px 10px;
+          border: none;
+          outline: none;
+          flex: 1;
+          min-width: 150px;
+        }
       </style>
       <div class="wrapper" id="multiselect">
         <div class="tags">
-          
           <input class="input-filter" type="text" tabindex="0" />
         </div>
         <div class="down-arrow"></div>
@@ -109,34 +135,62 @@ class WcMultiselect extends HTMLElement{
         </div>
       </div>`;
   }
+  setProps () {
+    this.list = JSON.parse(this.getAttribute('options'));
+    this.label = this.getAttribute('label');
+  }
   connectedCallback () {
+    this.setProps();
     this.template.innerHTML = this.htmlTemplate;
     const templateContent = this.template.content.cloneNode(true);
     this._content = templateContent.getElementById('multiselect');
-    this._content.getElementsByClassName('input-filter')[0].onkeyup = this.updateFilteredList;
+    this.filteredContent = this._content.getElementsByClassName('content')[0];
+    this.filteredContent.style.display = 'none';
+    this.input = this._content.getElementsByClassName('input-filter')[0];
+    this.input.onkeyup = this.updateFilteredList;
+    this.input.onkeydown = (e) => {
+      if (e.key == 'Backspace' && e.target.value == '') {
+        this.removeLastItem();
+      }
+    };
     this._content.getElementsByClassName('items')[0].onclick = this.addItem;
     this.attachShadow({ mode: 'open' });
     this.shadowRoot.appendChild(templateContent);
   }
   updateFilteredList (e) {
+    if (!this._content) {
+      return;
+    }
+    this.filteredContent.style.display = 'block';
     const items = this._content.getElementsByClassName('items')[0];
-    this.filterList = this.list.filter(item => item.includes(e.target.value));
+    this.filterList = this.list.filter(item => {
+      const itemLabel = item[this.label] ? item[this.label] : item;
+      return itemLabel.toString().includes(e ? e.target.value : '');
+    });
     items.innerHTML = '';
-    this.filterList.forEach(item => {
+    this.filterList.forEach((item, index) => {
+      const itemLabel = item[this.label] ? item[this.label] : item;
       const li = document.createElement('li');
-      li.innerText = item;
+      li.setAttribute('filtered-list-index', index);
+      li.innerText = itemLabel;
       items.appendChild(li);
     });
   }
   addItem (e) {
+    const filteredListIndex = parseInt(e.target.getAttribute('filtered-list-index'));
+    const isAlreadySelected  = this.selectedItems.filter(item => item == this.filterList[filteredListIndex]).length > 0;
+    if (isAlreadySelected) {
+      return;
+    }
+    this.filteredContent.style.display = 'none';
+    this.input.value = '';
     this.tags = this._content.getElementsByClassName('tags')[0];
     const lastChild = this.tags.children[this.tags.childElementCount-1];
     const span = document.createElement('span');
     const italic = document.createElement('i');
     italic.onclick = this.removeItem;
     italic.classList.add('close-icon');
-    italic.setAttribute("index", this.selectedItems.length-1);
-    italic.innerText = 'X';
+    italic.innerHTML = '&times;';
     span.innerHTML = 
       `<span>
         ${e.target.innerText}
@@ -144,11 +198,40 @@ class WcMultiselect extends HTMLElement{
     span.appendChild(italic);
     span.classList.add('tag');
     this.tags.insertBefore(span, lastChild);
-    this.selectedItems = [...this.selectedItems, e.target.innerText];
+    this.selectedItems = [...this.selectedItems, this.filterList[filteredListIndex]];
+
+    this.dispatchEvent(new CustomEvent('add-item', {
+      detail: { selectedItems: this.selectedItems },
+      bubbles: true
+    }));
   }
   removeItem (e) {
-    this.tags.removeChild(e.path[1]);
-    this.selectedItems = this.selectedItems.splice(e.target.getAttribute('index'), 1);
+    const itemToRemove = e.target.parentElement;
+    const listedItems = Object.values(e.target.parentElement.parentElement.children);
+    this.tags.removeChild(itemToRemove);
+    this.selectedItems.splice(listedItems.indexOf(itemToRemove), 1);
+    this.dispatchEvent(new CustomEvent('remove-item', {
+      detail: { selectedItems: this.selectedItems },
+      bubbles: true
+    }));
+  }
+  removeLastItem () {
+    if (this.tags) {
+      // last child is input box we want to remove last tag which is before input
+      const lastTag = this.tags.children[this.tags.childElementCount - 2];
+      this.tags.removeChild(lastTag);
+      this.selectedItems.splice(this.selectedItems.length-1, 1);
+      this.dispatchEvent(new CustomEvent('remove-item', {
+        detail: { selectedItems: this.selectedItems },
+        bubbles: true
+      }));
+    }
+  }
+  attributeChangedCallback(attr, oldVal, newVal) {
+    if (oldVal != newVal) {
+      this.setProps();
+      this.updateFilteredList();
+    }
   }
 }
 
